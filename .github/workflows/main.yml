@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# ── Add this permissions block ─────────────────────────────────────────────────
+permissions:
+  contents: read
+  security-events: write      # ← fixes "Resource not accessible by integration"
+  actions: read
+
 jobs:
   sast-scan:
     runs-on: ubuntu-latest
@@ -19,26 +25,24 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ── Bandit — static code analysis ─────────────────────────────────────
+      # ── Bandit SAST ────────────────────────────────────────────────────────
       - name: Install Bandit
         run: pip install bandit
 
       - name: Run Bandit SAST scan
         run: bandit -r . -ll -ii
-        # no requirements.txt needed — scans .py files directly
 
-      # ── Snyk Code — SAST (not SCA) ────────────────────────────────────────
+      # ── Snyk Code SAST ────────────────────────────────────────────────────
       - name: Run Snyk Code SAST scan
         uses: snyk/actions/python@master
         env:
           SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
         with:
-          command: code test                       # ← "code test" = SAST
-          args: --severity-threshold=high          # blocks on high+ findings
-        # no requirements.txt needed — scans source code directly
+          command: code test
+          args: --severity-threshold=high
 
-      # ── Upload results to GitHub Security tab ─────────────────────────────
-      - name: Upload Snyk SARIF results
+      # ── Upload SARIF results ───────────────────────────────────────────────
+      - name: Generate Snyk SARIF report
         uses: snyk/actions/python@master
         if: always()
         env:
@@ -48,7 +52,7 @@ jobs:
           args: --sarif-file-output=snyk-sast.sarif
 
       - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4    # ← v3 to v4
         if: always()
         with:
           sarif_file: snyk-sast.sarif

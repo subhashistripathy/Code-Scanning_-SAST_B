@@ -1,60 +1,54 @@
-name: Code Scan 
+name: Code Scan
 
 on:
   push:
-    branches:
-      - '**'          # Run on all branches
+    branches: [main]
   pull_request:
-    branches:
-      - '**'          # Run on all PRs
-  workflow_dispatch:
+    branches: [main]
 
 jobs:
-  snyk-code-scan:
+  security-scan:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      security-events: write
-
     steps:
-      # Checkout code
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # Setup Node.js
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '20'
+          python-version: '3.11'
 
-      # Install Snyk CLI
-      - name: Install Snyk CLI
-        run: npm install -g snyk
-
-      # Authenticate Snyk
-      - name: Authenticate Snyk
-        env:
-          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
-        run: snyk auth "$SNYK_TOKEN"
-
-      # Run Snyk Code Test
-      - name: Run Snyk Code Test (Generate SARIF)
-        env:
-          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
+      - name: Install dependencies
         run: |
-          snyk code test \
-            --all-projects \
-            --sarif-file-output=snyk-code.sarif \
-            --severity-threshold=low \
-            --json || true
+          pip install bandit
+          pip install -r requirements.txt   # Snyk needs this to scan deps
 
-
-          # Confirm SARIF exists
-          ls -lh snyk-code.sarif
-
-      # Upload SARIF to GitHub Code Scanning
-      - name: Upload SARIF to GitHub
-        uses: github/codeql-action/upload-sarif@v4
+      # ── Snyk scan ─────────────────────────────────────────────────────────
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/python@master
+        env:
+          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde   # ← pulls from GitHub Secrets
         with:
-          sarif_file: snyk-code.sarif
+          args: --severity-threshold=high          # blocks on high+ severity
+          # options: low | medium | high | critical
+
+      # ── Bandit scan (blocks on code-level issues) ──────────────────────────
+      - name: Run Bandit scan
+        run: bandit -r . -ll -ii
+        # no --exit-zero, no continue-on-error → pipeline fails on findings
+
+      # ── Upload Snyk results to GitHub Security tab (optional but useful) ───
+      - name: Upload Snyk results to GitHub
+        uses: snyk/actions/python@master
+        if: always()                               # runs even if scan fails
+        env:
+          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
+        with:
+          args: --sarif-file-output=snyk.sarif
+          
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: snyk.sarif

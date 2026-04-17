@@ -1,4 +1,4 @@
-name: Code Scan
+name: SAST Scan
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  security-scan:
+  sast-scan:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,36 +19,36 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          pip install bandit
-          pip install -r requirements.txt   # Snyk needs this to scan deps
+      # ── Bandit — static code analysis ─────────────────────────────────────
+      - name: Install Bandit
+        run: pip install bandit
 
-      # ── Snyk scan ─────────────────────────────────────────────────────────
-      - name: Run Snyk to check for vulnerabilities
-        uses: snyk/actions/python@master
-        env:
-          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde   # ← pulls from GitHub Secrets
-        with:
-          args: --severity-threshold=high          # blocks on high+ severity
-          # options: low | medium | high | critical
-
-      # ── Bandit scan (blocks on code-level issues) ──────────────────────────
-      - name: Run Bandit scan
+      - name: Run Bandit SAST scan
         run: bandit -r . -ll -ii
-        # no --exit-zero, no continue-on-error → pipeline fails on findings
+        # no requirements.txt needed — scans .py files directly
 
-      # ── Upload Snyk results to GitHub Security tab (optional but useful) ───
-      - name: Upload Snyk results to GitHub
+      # ── Snyk Code — SAST (not SCA) ────────────────────────────────────────
+      - name: Run Snyk Code SAST scan
         uses: snyk/actions/python@master
-        if: always()                               # runs even if scan fails
         env:
           SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
         with:
-          args: --sarif-file-output=snyk.sarif
-          
+          command: code test                       # ← "code test" = SAST
+          args: --severity-threshold=high          # blocks on high+ findings
+        # no requirements.txt needed — scans source code directly
+
+      # ── Upload results to GitHub Security tab ─────────────────────────────
+      - name: Upload Snyk SARIF results
+        uses: snyk/actions/python@master
+        if: always()
+        env:
+          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
+        with:
+          command: code test
+          args: --sarif-file-output=snyk-sast.sarif
+
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: snyk.sarif
+          sarif_file: snyk-sast.sarif

@@ -47,7 +47,7 @@ jobs:
             --all-projects \
             --sarif-file-output=snyk-code.sarif \
             --severity-threshold=low \
-            --json || true
+            
 
           # Confirm SARIF exists
           ls -lh snyk-code.sarif

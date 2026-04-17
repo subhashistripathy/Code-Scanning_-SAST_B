@@ -35,13 +35,13 @@ jobs:
       # Authenticate Snyk
       - name: Authenticate Snyk
         env:
-          SNYK_TOKEN: c80a2012-bb87-4482-beb5-399c664f183d
+          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
         run: snyk auth "$SNYK_TOKEN"
 
       # Run Snyk Code Test
       - name: Run Snyk Code Test (Generate SARIF)
         env:
-          SNYK_TOKEN: c80a2012-bb87-4482-beb5-399c664f183d
+          SNYK_TOKEN: aed514c5-df9e-40d2-8cfc-51990b7a3cde
         run: |
           snyk code test \
             --all-projects \

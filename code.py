@@ -1,151 +1,178 @@
 import os
-import re
 import sqlite3
 import hashlib
-import subprocess
-import secrets
-import logging
-from pathlib import Path
-from flask import Flask, request, abort
 import requests
-from functools import wraps
+import pickle
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
+from flask import Flask, request, jsonify, session
+import jwt
+import yaml
+import logging
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
 
-# ── Credential: load from environment, never hardcoded ────────────────────────
-API_KEY = os.environ.get("API_KEY")
-if not API_KEY:
-    raise RuntimeError("API_KEY environment variable is not set")
+# ── 1. Hardcoded Credentials (Critical) ───────────────────────────────────────
+API_KEY = "sk_test_123456_secret_key_exposed"
+DB_PASSWORD = "admin123"
+SECRET_KEY = "supersecretkey123"
+AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
+AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+app.secret_key = "hardcoded_flask_secret"
 
-# ── Strong password hashing with bcrypt ───────────────────────────────────────
-try:
-    import bcrypt
-    def store_password(user: str, pwd: str) -> None:
-        """Hash password with bcrypt (salted, slow) and persist securely."""
-        hashed = bcrypt.hashpw(pwd.encode(), bcrypt.gensalt())
-        # In production replace with a proper DB write; never a plain text file.
-        conn = sqlite3.connect("users.db")
-        cur  = conn.cursor()
-        cur.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (user, hashed.decode())
-        )
-        conn.commit()
-        conn.close()
+# ── 2. Weak Password Hashing (High) ───────────────────────────────────────────
+def store_password(user, pwd):
+    hashed = hashlib.md5(pwd.encode()).hexdigest()
+    with open("users.txt", "a") as f:
+        f.write(f"{user}:{hashed}\n")
 
-    def verify_password(user: str, pwd: str) -> bool:
-        conn = sqlite3.connect("users.db")
-        cur  = conn.cursor()
-        cur.execute("SELECT password_hash FROM users WHERE username = ?", (user,))
-        row = cur.fetchone()
-        conn.close()
-        if not row:
-            return False
-        return bcrypt.checkpw(pwd.encode(), row[0].encode())
+# ── 3. SQL Injection (Critical) ───────────────────────────────────────────────
+def get_user(username):
+    conn = sqlite3.connect("test.db")
+    cur = conn.cursor()
+    query = f"SELECT * FROM users WHERE name = '{username}'"
+    return cur.execute(query).fetchall()
 
-except ImportError:
-    logging.warning("bcrypt not installed; falling back to SHA-256+salt (install bcrypt for production)")
-    def store_password(user: str, pwd: str) -> None:          # type: ignore[misc]
-        salt   = secrets.token_hex(32)
-        hashed = hashlib.sha256((salt + pwd).encode()).hexdigest()
-        conn   = sqlite3.connect("users.db")
-        cur    = conn.cursor()
-        cur.execute(
-            "INSERT INTO users (username, salt, password_hash) VALUES (?, ?, ?)",
-            (user, salt, hashed)
-        )
-        conn.commit()
-        conn.close()
+def get_user_by_id(user_id):
+    conn = sqlite3.connect("test.db")
+    cur = conn.cursor()
+    query = "SELECT * FROM users WHERE id = " + user_id
+    return cur.execute(query).fetchall()
 
-
-# ── Parameterised query — no SQL injection ────────────────────────────────────
-def get_user(username: str) -> list:
-    """Return user rows for username using a parameterised query."""
-    conn = sqlite3.connect("users.db")
-    cur  = conn.cursor()
-    # The (?,) tuple placeholder is never interpolated into SQL text.
-    rows = cur.execute("SELECT id, username FROM users WHERE username = ?", (username,)).fetchall()
-    conn.close()
-    return rows
-
-
-# ── Allowed-host guard (reusable decorator) ───────────────────────────────────
-ALLOWED_FETCH_HOSTS = {h.strip() for h in os.environ.get("ALLOWED_FETCH_HOSTS", "").split(",") if h.strip()}
-
-def require_api_key(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        key = request.headers.get("X-API-Key", "")
-        if not secrets.compare_digest(key, API_KEY):
-            abort(401)
-        return f(*args, **kwargs)
-    return decorated
-
-
-# ── No command injection: allow-list + subprocess with no shell ───────────────
-IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
-
+# ── 4. Command Injection (Critical) ───────────────────────────────────────────
 @app.route("/ping")
-@require_api_key
 def ping():
-    ip = request.args.get("ip", "")
-    if not IPV4_RE.match(ip):
-        abort(400, "Invalid IP address")
-    # Never shell=True; pass as a list so no shell interpretation occurs.
-    result = subprocess.run(
-        ["ping", "-c", "1", ip],
-        capture_output=True, text=True, timeout=5
-    )
-    return result.stdout, 200, {"Content-Type": "text/plain"}
+    ip = request.args.get("ip")
+    return os.popen("ping -c 1 " + ip).read()
 
+@app.route("/traceroute")
+def traceroute():
+    host = request.args.get("host")
+    result = subprocess.run(f"traceroute {host}", shell=True, capture_output=True, text=True)
+    return result.stdout
 
-# ── SSL verification on; host allow-list enforced ─────────────────────────────
+# ── 5. No SSL Verification (High) ─────────────────────────────────────────────
 @app.route("/fetch")
-@require_api_key
 def fetch():
-    from urllib.parse import urlparse
-    url = request.args.get("url", "")
-    parsed = urlparse(url)
-
-    if parsed.scheme != "https":
-        abort(400, "Only HTTPS URLs are permitted")
-    if parsed.hostname not in ALLOWED_FETCH_HOSTS:
-        abort(403, "Host not in allow-list")
-
-    try:
-        r = requests.get(url, verify=True, timeout=10, allow_redirects=False)
-        r.raise_for_status()
-    except requests.RequestException as exc:
-        logging.error("Fetch failed: %s", exc)
-        abort(502, "Upstream request failed")
-
+    url = request.args.get("url")
+    r = requests.get(url, verify=False)
     return r.text
 
-
-# ── Path traversal eliminated: resolve & jail inside BASE_DIR ─────────────────
-BASE_DIR = Path("/var/data").resolve()
-
+# ── 6. Path Traversal (High) ──────────────────────────────────────────────────
 @app.route("/read")
-@require_api_key
 def read_file():
-    filename = request.args.get("file", "")
-    # Reject obvious traversal chars before even touching the filesystem.
-    if ".." in filename or filename.startswith("/"):
-        abort(400, "Invalid filename")
+    filename = request.args.get("file")
+    return open("/var/data/" + filename, "r").read()
 
-    target = (BASE_DIR / filename).resolve()
+@app.route("/download")
+def download_file():
+    filename = request.args.get("file")
+    filepath = os.path.join("/uploads/", filename)
+    with open(filepath, "rb") as f:
+        return f.read()
 
-    # Confirm the resolved path is still inside BASE_DIR.
-    if not target.is_relative_to(BASE_DIR):
-        abort(400, "Access denied")
-    if not target.is_file():
-        abort(404, "File not found")
+# ── 7. Insecure Deserialization (Critical) ────────────────────────────────────
+@app.route("/deserialize", methods=["POST"])
+def deserialize():
+    data = request.get_data()
+    obj = pickle.loads(data)              # arbitrary code execution possible
+    return str(obj)
 
-    return target.read_text()
+# ── 8. XML External Entity Injection — XXE (High) ─────────────────────────────
+@app.route("/parse_xml", methods=["POST"])
+def parse_xml():
+    xml_data = request.get_data()
+    tree = ET.fromstring(xml_data)        # XXE not disabled
+    return ET.tostring(tree)
 
+# ── 9. JWT None Algorithm Attack (Critical) ───────────────────────────────────
+@app.route("/login", methods=["POST"])
+def login():
+    username = request.form.get("username")
+    token = jwt.encode(
+        {"user": username, "admin": False},
+        SECRET_KEY,
+        algorithm="HS256"
+    )
+    return jsonify({"token": token})
 
-# ── Debug mode off in production ──────────────────────────────────────────────
+@app.route("/admin")
+def admin():
+    token = request.headers.get("Authorization")
+    decoded = jwt.decode(
+        token,
+        options={"verify_signature": False}   # signature not verified!
+    )
+    return jsonify(decoded)
+
+# ── 10. YAML Deserialization (Critical) ───────────────────────────────────────
+@app.route("/parse_yaml", methods=["POST"])
+def parse_yaml():
+    data = request.get_data()
+    parsed = yaml.load(data)              # unsafe load — use yaml.safe_load
+    return str(parsed)
+
+# ── 11. Server-Side Request Forgery — SSRF (High) ─────────────────────────────
+@app.route("/proxy")
+def proxy():
+    target = request.args.get("url")
+    r = requests.get(target)             # no allow-list, hits internal services
+    return r.text
+
+# ── 12. Insecure Temporary File (Medium) ──────────────────────────────────────
+@app.route("/upload", methods=["POST"])
+def upload():
+    data = request.get_data()
+    tmp = tempfile.mktemp(suffix=".dat")  # race condition — use mkstemp
+    with open(tmp, "wb") as f:
+        f.write(data)
+    return tmp
+
+# ── 13. Hardcoded Admin Bypass (Critical) ─────────────────────────────────────
+@app.route("/auth")
+def auth():
+    username = request.args.get("username")
+    password = request.args.get("password")
+    if username == "admin" and password == "password123":   # hardcoded backdoor
+        session["authenticated"] = True
+        return "Access granted"
+    return "Access denied"
+
+# ── 14. Sensitive Data in Logs (Medium) ───────────────────────────────────────
+@app.route("/process")
+def process():
+    credit_card = request.args.get("cc_number")
+    ssn         = request.args.get("ssn")
+    logging.info(f"Processing payment for CC: {credit_card}, SSN: {ssn}")  # PII in logs!
+    return "Processing"
+
+# ── 15. Open Redirect (Medium) ────────────────────────────────────────────────
+@app.route("/redirect")
+def redirect_user():
+    url = request.args.get("next")
+    return f'<a href="{url}">Click here</a>'   # unvalidated redirect
+
+# ── 16. Weak Random Token Generation (High) ───────────────────────────────────
+import random
+import string
+
+@app.route("/reset_token")
+def reset_token():
+    token = ''.join(random.choices(string.ascii_letters, k=16))  # not cryptographically secure
+    return jsonify({"reset_token": token})
+
+# ── 17. Mass Assignment (High) ────────────────────────────────────────────────
+@app.route("/update_user", methods=["POST"])
+def update_user():
+    data = request.get_json()
+    conn = sqlite3.connect("test.db")
+    cur  = conn.cursor()
+    for key, value in data.items():                          # all fields blindly trusted
+        cur.execute(f"UPDATE users SET {key} = '{value}'")  # SQL injection too!
+    conn.commit()
+    return "Updated"
+
+# ── 18. Debug mode enabled (Medium) ───────────────────────────────────────────
 if __name__ == "__main__":
-    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
-    app.run(debug=debug)
+    app.run(debug=True, host="0.0.0.0")   # exposed on all interfaces

@@ -6,10 +6,10 @@ on:
   pull_request:
     branches: [main]
 
-# ── Add this permissions block ─────────────────────────────────────────────────
+# Add this permissions block 
 permissions:
   contents: read
-  security-events: write      # ← fixes "Resource not accessible by integration"
+  security-events: write      # fixes "Resource not accessible by integration"
   actions: read
 
 jobs:
@@ -25,14 +25,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ── Bandit SAST ────────────────────────────────────────────────────────
+      # Bandit SAST 
       - name: Install Bandit
         run: pip install bandit
 
       - name: Run Bandit SAST scan
         run: bandit -r . -ll -ii
 
-      # ── Snyk Code SAST ────────────────────────────────────────────────────
+      # Snyk Code SAST
       - name: Run Snyk Code SAST scan
         uses: snyk/actions/python@master
         env:
@@ -41,7 +41,7 @@ jobs:
           command: code test
           args: --severity-threshold=high
 
-      # ── Upload SARIF results ───────────────────────────────────────────────
+      # Upload SARIF results 
       - name: Generate Snyk SARIF report
         uses: snyk/actions/python@master
         if: always()

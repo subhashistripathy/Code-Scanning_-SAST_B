@@ -13,21 +13,13 @@ import logging
 
 app = Flask(__name__)
 
-# ── 1. Hardcoded Credentials (Critical) ───────────────────────────────────────
-API_KEY = "sk_test_123456_secret_key_exposed"
-DB_PASSWORD = "admin123"
-SECRET_KEY = "supersecretkey123"
-AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
-AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-app.secret_key = "hardcoded_flask_secret"
-
-# ── 2. Weak Password Hashing (High) ───────────────────────────────────────────
+# 1. Weak Password Hashing (High) 
 def store_password(user, pwd):
     hashed = hashlib.md5(pwd.encode()).hexdigest()
     with open("users.txt", "a") as f:
         f.write(f"{user}:{hashed}\n")
 
-# ── 3. SQL Injection (Critical) ───────────────────────────────────────────────
+# 2. SQL Injection (Critical) 
 def get_user(username):
     conn = sqlite3.connect("test.db")
     cur = conn.cursor()
@@ -40,7 +32,7 @@ def get_user_by_id(user_id):
     query = "SELECT * FROM users WHERE id = " + user_id
     return cur.execute(query).fetchall()
 
-# ── 4. Command Injection (Critical) ───────────────────────────────────────────
+# 3. Command Injection (Critical) 
 @app.route("/ping")
 def ping():
     ip = request.args.get("ip")
@@ -52,14 +44,14 @@ def traceroute():
     result = subprocess.run(f"traceroute {host}", shell=True, capture_output=True, text=True)
     return result.stdout
 
-# ── 5. No SSL Verification (High) ─────────────────────────────────────────────
+# 4. No SSL Verification (High) 
 @app.route("/fetch")
 def fetch():
     url = request.args.get("url")
     r = requests.get(url, verify=False)
     return r.text
 
-# ── 6. Path Traversal (High) ──────────────────────────────────────────────────
+# 5. Path Traversal (High) 
 @app.route("/read")
 def read_file():
     filename = request.args.get("file")
@@ -72,21 +64,21 @@ def download_file():
     with open(filepath, "rb") as f:
         return f.read()
 
-# ── 7. Insecure Deserialization (Critical) ────────────────────────────────────
+# 6. Insecure Deserialization (Critical) 
 @app.route("/deserialize", methods=["POST"])
 def deserialize():
     data = request.get_data()
     obj = pickle.loads(data)              # arbitrary code execution possible
     return str(obj)
 
-# ── 8. XML External Entity Injection — XXE (High) ─────────────────────────────
+# 7. XML External Entity Injection — XXE (High) 
 @app.route("/parse_xml", methods=["POST"])
 def parse_xml():
     xml_data = request.get_data()
     tree = ET.fromstring(xml_data)        # XXE not disabled
     return ET.tostring(tree)
 
-# ── 9. JWT None Algorithm Attack (Critical) ───────────────────────────────────
+# 8. JWT None Algorithm Attack (Critical) 
 @app.route("/login", methods=["POST"])
 def login():
     username = request.form.get("username")
@@ -106,21 +98,21 @@ def admin():
     )
     return jsonify(decoded)
 
-# ── 10. YAML Deserialization (Critical) ───────────────────────────────────────
+# 9. YAML Deserialization (Critical) 
 @app.route("/parse_yaml", methods=["POST"])
 def parse_yaml():
     data = request.get_data()
     parsed = yaml.load(data)              # unsafe load — use yaml.safe_load
     return str(parsed)
 
-# ── 11. Server-Side Request Forgery — SSRF (High) ─────────────────────────────
+# 10. Server-Side Request Forgery — SSRF (High)
 @app.route("/proxy")
 def proxy():
     target = request.args.get("url")
     r = requests.get(target)             # no allow-list, hits internal services
     return r.text
 
-# ── 12. Insecure Temporary File (Medium) ──────────────────────────────────────
+# 11. Insecure Temporary File (Medium) 
 @app.route("/upload", methods=["POST"])
 def upload():
     data = request.get_data()
@@ -129,7 +121,7 @@ def upload():
         f.write(data)
     return tmp
 
-# ── 13. Hardcoded Admin Bypass (Critical) ─────────────────────────────────────
+# 12. Hardcoded Admin Bypass (Critical) 
 @app.route("/auth")
 def auth():
     username = request.args.get("username")
@@ -139,7 +131,7 @@ def auth():
         return "Access granted"
     return "Access denied"
 
-# ── 14. Sensitive Data in Logs (Medium) ───────────────────────────────────────
+# 13. Sensitive Data in Logs (Medium) 
 @app.route("/process")
 def process():
     credit_card = request.args.get("cc_number")
@@ -147,13 +139,13 @@ def process():
     logging.info(f"Processing payment for CC: {credit_card}, SSN: {ssn}")  # PII in logs!
     return "Processing"
 
-# ── 15. Open Redirect (Medium) ────────────────────────────────────────────────
+# 14. Open Redirect (Medium) 
 @app.route("/redirect")
 def redirect_user():
     url = request.args.get("next")
     return f'<a href="{url}">Click here</a>'   # unvalidated redirect
 
-# ── 16. Weak Random Token Generation (High) ───────────────────────────────────
+# 15. Weak Random Token Generation (High) 
 import random
 import string
 
@@ -162,7 +154,7 @@ def reset_token():
     token = ''.join(random.choices(string.ascii_letters, k=16))  # not cryptographically secure
     return jsonify({"reset_token": token})
 
-# ── 17. Mass Assignment (High) ────────────────────────────────────────────────
+# 16. Mass Assignment (High)
 @app.route("/update_user", methods=["POST"])
 def update_user():
     data = request.get_json()
@@ -173,6 +165,6 @@ def update_user():
     conn.commit()
     return "Updated"
 
-# ── 18. Debug mode enabled (Medium) ───────────────────────────────────────────
+# 17. Debug mode enabled (Medium) 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0")   # exposed on all interfaces
